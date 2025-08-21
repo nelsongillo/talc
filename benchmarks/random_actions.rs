@@ -25,7 +25,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #![feature(iter_intersperse)]
 
 use std::{
-    alloc::{GlobalAlloc, Layout}, fmt::Write, ptr::{addr_of_mut, NonNull}, sync::{Arc, Barrier}, time::{Duration, Instant}
+    alloc::{GlobalAlloc, Layout},
+    fmt::Write,
+    ptr::{NonNull, addr_of_mut},
+    sync::{Arc, Barrier},
+    time::{Duration, Instant},
 };
 
 use buddy_alloc::{BuddyAllocParam, FastAllocParam, NonThreadsafeAlloc};
@@ -77,9 +81,11 @@ fn main() {
 
         for allocator in allocators {
             // these request memory from the OS on-demand, instead of being arena-allocated
-            if matches!(allocator.name, "Frusa" | "System") { continue; }
+            if matches!(allocator.name, "Frusa" | "System") {
+                continue;
+            }
 
-            let efficiency = heap_efficiency(unsafe {(allocator.init_fn)() }.as_ref());
+            let efficiency = heap_efficiency(unsafe { (allocator.init_fn)() }.as_ref());
 
             println!("|{:>22} | {:>38} |", allocator.name, format!("{:2.2}%", efficiency));
         }
@@ -93,28 +99,33 @@ fn main() {
 
     for &NamedAllocator { name, init_fn } in allocators {
         write!(csv, "{}", name).unwrap();
-        
+
         for &max_alloc_size in RA_MAX_ALLOC_SIZES.iter() {
             eprintln!("benchmarking {} - max alloc size {}B ...", name, max_alloc_size);
-    
-            let score = (0..RA_TRIALS_AMOUNT)
-                .map(|_| {
-                    let allocator = unsafe { (init_fn)() };
-                    let allocator_ref = allocator.as_ref();
-    
-                    std::thread::scope(|scope| {
-                        let barrier = Arc::new(Barrier::new(THREAD_COUNT));
-                        let mut handles = vec![];
-    
-                        for _ in 0..THREAD_COUNT {
-                            let bi = barrier.clone();
-                            handles.push(scope.spawn(move || random_actions( allocator_ref, max_alloc_size, bi)));
-                        }
-    
-                        handles.into_iter().map(|h| h.join().unwrap()).sum::<usize>()
+
+            let score =
+                (0..RA_TRIALS_AMOUNT)
+                    .map(|_| {
+                        let allocator = unsafe { (init_fn)() };
+                        let allocator_ref = allocator.as_ref();
+
+                        std::thread::scope(|scope| {
+                            let barrier = Arc::new(Barrier::new(THREAD_COUNT));
+                            let mut handles = vec![];
+
+                            for _ in 0..THREAD_COUNT {
+                                let bi = barrier.clone();
+                                handles.push(scope.spawn(move || {
+                                    random_actions(allocator_ref, max_alloc_size, bi)
+                                }));
+                            }
+
+                            handles.into_iter().map(|h| h.join().unwrap()).sum::<usize>()
+                        })
                     })
-                }).sum::<usize>() / RA_TRIALS_AMOUNT;
-    
+                    .sum::<usize>()
+                    / RA_TRIALS_AMOUNT;
+
             write!(csv, ",{}", score).unwrap();
         }
 
@@ -126,8 +137,11 @@ fn main() {
     std::fs::write(format!("{}/Random Actions Benchmark.csv", BENCHMARK_RESULTS_DIR), csv).unwrap();
 }
 
-
-pub fn random_actions(allocator: &dyn GlobalAlloc, max_alloc_size: usize, barrier: Arc<Barrier>) -> usize {
+pub fn random_actions(
+    allocator: &dyn GlobalAlloc,
+    max_alloc_size: usize,
+    barrier: Arc<Barrier>,
+) -> usize {
     let mut score = 0;
     let mut v: Vec<AllocationWrapper<'_>> = Vec::with_capacity(100000);
     let rng = fastrand::Rng::new();
@@ -160,7 +174,7 @@ pub fn random_actions(allocator: &dyn GlobalAlloc, max_alloc_size: usize, barrie
                 }
             } else if action < 2 || v.len() < RA_TARGET_MIN_ALLOCATIONS {
                 let size = rng.usize(1..max_alloc_size);
-                let alignment =  std::mem::align_of::<usize>() << rng.u16(..).trailing_zeros() / 2;
+                let alignment = std::mem::align_of::<usize>() << rng.u16(..).trailing_zeros() / 2;
                 if let Some(allocation) = AllocationWrapper::new(size, alignment, allocator) {
                     v.push(allocation);
                     score += 1;
@@ -190,7 +204,8 @@ pub fn heap_efficiency(allocator: &dyn GlobalAlloc) -> f64 {
             match action {
                 0..=4 => {
                     let size = fastrand::usize(1..HE_MAX_ALLOC_SIZE);
-                    let align = std::mem::align_of::<usize>() << fastrand::u16(..).trailing_zeros() / 2;
+                    let align =
+                        std::mem::align_of::<usize>() << fastrand::u16(..).trailing_zeros() / 2;
 
                     if let Some(allocation) = AllocationWrapper::new(size, align, allocator) {
                         v.push(allocation);
@@ -212,7 +227,8 @@ pub fn heap_efficiency(allocator: &dyn GlobalAlloc) -> f64 {
                         let index = fastrand::usize(0..v.len());
 
                         if let Some(random_allocation) = v.get_mut(index) {
-                            let new_size = fastrand::usize(1..(HE_MAX_ALLOC_SIZE*HE_MAX_REALLOC_SIZE_MULTI));
+                            let new_size =
+                                fastrand::usize(1..(HE_MAX_ALLOC_SIZE * HE_MAX_REALLOC_SIZE_MULTI));
                             random_allocation.realloc(new_size);
                         } else {
                             used += v.iter().map(|a| a.layout.size()).sum::<usize>();
@@ -264,8 +280,6 @@ impl<'a> Drop for AllocationWrapper<'a> {
     }
 }
 
-
-
 /// Memory must be available.
 unsafe fn init_talc() -> Box<dyn GlobalAlloc + Sync> {
     unsafe {
@@ -291,9 +305,10 @@ unsafe fn init_frusa() -> Box<dyn GlobalAlloc + Sync> {
 
 #[allow(unused)]
 unsafe fn init_galloc() -> Box<dyn GlobalAlloc + Sync> {
-    let galloc = good_memory_allocator::SpinLockedAllocator
-        ::<{good_memory_allocator::DEFAULT_SMALLBINS_AMOUNT}, {good_memory_allocator::DEFAULT_ALIGNMENT_SUB_BINS_AMOUNT}>
-        ::empty();
+    let galloc = good_memory_allocator::SpinLockedAllocator::<
+        { good_memory_allocator::DEFAULT_SMALLBINS_AMOUNT },
+        { good_memory_allocator::DEFAULT_ALIGNMENT_SUB_BINS_AMOUNT },
+    >::empty();
     galloc.init(addr_of_mut!(HEAP) as usize, HEAP_SIZE);
     Box::new(galloc)
 }
@@ -313,14 +328,14 @@ unsafe fn init_buddy_alloc() -> Box<dyn GlobalAlloc + Sync> {
             64,
         ),
     )));
-    
+
     Box::new(ba)
 }
 
 unsafe fn init_dlmalloc() -> Box<dyn GlobalAlloc + Sync> {
-    let dl = DlMallocator(spin::Mutex::new(
-        dlmalloc::Dlmalloc::new_with_allocator(DlmallocArena(spin::Mutex::new(false))),
-    ));
+    let dl = DlMallocator(spin::Mutex::new(dlmalloc::Dlmalloc::new_with_allocator(DlmallocArena(
+        spin::Mutex::new(false),
+    ))));
     Box::new(dl)
 }
 
@@ -330,11 +345,17 @@ unsafe impl Send for BuddyAllocWrapper {}
 unsafe impl Sync for BuddyAllocWrapper {}
 
 unsafe impl GlobalAlloc for BuddyAllocWrapper {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8  { self.0.lock().alloc(layout) }
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        self.0.lock().alloc(layout)
+    }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout)  { self.0.lock().dealloc(ptr, layout) }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        self.0.lock().dealloc(ptr, layout)
+    }
 
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 { self.0.lock().alloc_zeroed(layout) }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        self.0.lock().alloc_zeroed(layout)
+    }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         self.0.lock().realloc(ptr, layout, new_size)
@@ -374,7 +395,11 @@ unsafe impl dlmalloc::Allocator for DlmallocArena {
             *lock = true;
             let align = std::mem::align_of::<usize>();
             let heap_align_offset = addr_of_mut!(HEAP).align_offset(align);
-            (unsafe { addr_of_mut!(HEAP).cast::<u8>().add(heap_align_offset) }, (HEAP_SIZE - heap_align_offset) / align * align, 1)
+            (
+                unsafe { addr_of_mut!(HEAP).cast::<u8>().add(heap_align_offset) },
+                (HEAP_SIZE - heap_align_offset) / align * align,
+                1,
+            )
         }
     }
 
@@ -403,7 +428,9 @@ unsafe impl dlmalloc::Allocator for DlmallocArena {
     }
 }
 
-struct GlobalRLSF<'p>(spin::Mutex<rlsf::Tlsf<'p, usize, usize, {usize::BITS as usize - 12}, {usize::BITS as _}>>);
+struct GlobalRLSF<'p>(
+    spin::Mutex<rlsf::Tlsf<'p, usize, usize, { usize::BITS as usize - 12 }, { usize::BITS as _ }>>,
+);
 unsafe impl<'a> GlobalAlloc for GlobalRLSF<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.0.lock().allocate(layout).map_or(std::ptr::null_mut(), |nn| nn.as_ptr())
@@ -414,7 +441,12 @@ unsafe impl<'a> GlobalAlloc for GlobalRLSF<'a> {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        self.0.lock().reallocate(NonNull::new_unchecked(ptr), Layout::from_size_align_unchecked(new_size, layout.align()))
+        self.0
+            .lock()
+            .reallocate(
+                NonNull::new_unchecked(ptr),
+                Layout::from_size_align_unchecked(new_size, layout.align()),
+            )
             .map_or(std::ptr::null_mut(), |nn| nn.as_ptr())
     }
 }

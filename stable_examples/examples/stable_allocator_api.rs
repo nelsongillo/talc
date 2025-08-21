@@ -1,5 +1,5 @@
-use talc::{ErrOnOom, Talc};
 use allocator_api2::vec::Vec;
+use talc::{ErrOnOom, Talc};
 
 // This uses the `allocator-api2` crate to compile successfully on stable Rust.
 
@@ -20,9 +20,7 @@ fn main() {
     let talck = Talc::new(ErrOnOom).lock::<spin::Mutex<()>>();
 
     // We know the memory is fine for use (unsafe) and that it's big enough for the metadata (unwrap).
-    let heap = unsafe {
-        talck.lock().claim(arena.as_mut().into()).unwrap()
-    };
+    let heap = unsafe { talck.lock().claim(arena.as_mut().into()).unwrap() };
 
     // Allocate, grow, shrink
     let mut vec = Vec::with_capacity_in(100, &talck);
@@ -45,14 +43,12 @@ fn main() {
     let allocated_span = unsafe { talc.get_allocated_span(heap) };
 
     // Let's say we want to leave only a little bit of memory on either side,
-    // and free the rest of the heap. 
+    // and free the rest of the heap.
     // Additionally, make sure we don't "truncate" to beyond the original heap's boundary.
     let new_heap = allocated_span.extend(200, 200).fit_within(heap);
 
     // Finally, truncate the heap!
-    let _heap2 = unsafe {
-        talc.truncate(heap, new_heap)
-    };
+    let _heap2 = unsafe { talc.truncate(heap, new_heap) };
 
     // and we're done!
     drop(talc);

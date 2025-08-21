@@ -32,14 +32,13 @@ use talc::{ErrOnOom, Talc};
 
 use std::alloc::{GlobalAlloc, Layout};
 use std::fs::File;
-use std::ptr::{addr_of_mut, NonNull};
+use std::ptr::{NonNull, addr_of_mut};
 use std::time::Instant;
 
 const BENCH_DURATION: f64 = 1.0;
 
 const HEAP_SIZE: usize = 0x10000000;
 static mut HEAP_MEMORY: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
-
 
 // Turn DlMalloc into an arena allocator
 struct DlmallocArena(std::sync::atomic::AtomicBool);
@@ -51,7 +50,13 @@ unsafe impl dlmalloc::Allocator for DlmallocArena {
         if has_data {
             let align = std::mem::align_of::<usize>();
             let heap_align_offset = addr_of_mut!(HEAP_MEMORY).align_offset(align);
-            unsafe { (addr_of_mut!(HEAP_MEMORY).cast::<u8>().add(heap_align_offset), (HEAP_SIZE - heap_align_offset) / align * align, 1) }
+            unsafe {
+                (
+                    addr_of_mut!(HEAP_MEMORY).cast::<u8>().add(heap_align_offset),
+                    (HEAP_SIZE - heap_align_offset) / align * align,
+                    1,
+                )
+            }
         } else {
             (core::ptr::null_mut(), 0, 0)
         }
@@ -102,7 +107,11 @@ unsafe impl GlobalAlloc for DlMallocator {
     }
 }
 
-struct GlobalRLSF<'p>(spin::Mutex<rlsf::Tlsf<'p, usize, usize, {usize::BITS as usize - 4}, {usize::BITS as usize}>>);
+struct GlobalRLSF<'p>(
+    spin::Mutex<
+        rlsf::Tlsf<'p, usize, usize, { usize::BITS as usize - 4 }, { usize::BITS as usize }>,
+    >,
+);
 unsafe impl<'a> GlobalAlloc for GlobalRLSF<'a> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.0.lock().allocate(layout).map_or(std::ptr::null_mut(), |nn| nn.as_ptr())
@@ -113,19 +122,23 @@ unsafe impl<'a> GlobalAlloc for GlobalRLSF<'a> {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        self.0.lock().reallocate(NonNull::new_unchecked(ptr), Layout::from_size_align_unchecked(new_size, layout.align()))
+        self.0
+            .lock()
+            .reallocate(
+                NonNull::new_unchecked(ptr),
+                Layout::from_size_align_unchecked(new_size, layout.align()),
+            )
             .map_or(std::ptr::null_mut(), |nn| nn.as_ptr())
     }
 }
-
-
 
 fn main() {
     const BENCHMARK_RESULTS_DIR: &str = "./benchmark_results/micro/";
     // create a directory for the benchmark results.
     let _ = std::fs::create_dir_all(BENCHMARK_RESULTS_DIR).unwrap();
 
-    let sum_file = File::create(BENCHMARK_RESULTS_DIR.to_owned() + "Alloc Plus Dealloc.csv").unwrap();
+    let sum_file =
+        File::create(BENCHMARK_RESULTS_DIR.to_owned() + "Alloc Plus Dealloc.csv").unwrap();
     let mut csvs = Csvs { sum_file };
 
     // warm up the memory caches, avoid demand paging issues, etc.
@@ -137,7 +150,7 @@ fn main() {
 
     /* let linked_list_allocator =
         unsafe { linked_list_allocator::LockedHeap::new(HEAP_MEMORY.as_mut_ptr() as _, HEAP_SIZE) };
-    
+
     benchmark_allocator(&linked_list_allocator, "Linked List Allocator", &mut csvs); */
 
     let mut galloc_allocator =
@@ -151,14 +164,18 @@ fn main() {
     let buddy_alloc = unsafe {
         buddy_alloc::NonThreadsafeAlloc::new(
             FastAllocParam::new(addr_of_mut!(HEAP_MEMORY).cast(), HEAP_SIZE / 8),
-            BuddyAllocParam::new(addr_of_mut!(HEAP_MEMORY).cast::<u8>().add(HEAP_SIZE / 8), HEAP_SIZE / 8 * 7, 64),
+            BuddyAllocParam::new(
+                addr_of_mut!(HEAP_MEMORY).cast::<u8>().add(HEAP_SIZE / 8),
+                HEAP_SIZE / 8 * 7,
+                64,
+            ),
         )
     };
     benchmark_allocator(&buddy_alloc, "Buddy Allocator", &mut csvs);
 
-    let dlmalloc = DlMallocator(spin::Mutex::new(
-        dlmalloc::Dlmalloc::new_with_allocator(DlmallocArena(true.into()))
-    ));
+    let dlmalloc = DlMallocator(spin::Mutex::new(dlmalloc::Dlmalloc::new_with_allocator(
+        DlmallocArena(true.into()),
+    )));
     benchmark_allocator(&dlmalloc, "Dlmalloc", &mut csvs);
 
     let talc = Talc::new(ErrOnOom).lock::<talc::locking::AssumeUnlockable>();
@@ -169,7 +186,7 @@ fn main() {
     let tlsf = GlobalRLSF(spin::Mutex::new(rlsf::Tlsf::new()));
     tlsf.0.lock().insert_free_block(unsafe { std::mem::transmute(&mut HEAP_MEMORY[..]) });
     benchmark_allocator(&tlsf, "RLSF", &mut csvs);
-    
+
     // benchmark_allocator(&std::alloc::System, "System", &mut csvs);
     // benchmark_allocator(&frusa::Frusa2M::new(&std::alloc::System), "Frusa", &mut csvs);
 }
@@ -184,7 +201,9 @@ fn now() -> u64 {
     #[cfg(target_arch = "aarch64")]
     {
         let mut timer: u64;
-        unsafe { std::arch::asm!("mrs {0}, cntvct_el0", out(reg) timer, options(nomem, nostack)); }
+        unsafe {
+            std::arch::asm!("mrs {0}, cntvct_el0", out(reg) timer, options(nomem, nostack));
+        }
         return timer;
     }
 
@@ -195,7 +214,7 @@ fn now() -> u64 {
 }
 
 struct Csvs {
-    pub sum_file: File, 
+    pub sum_file: File,
 }
 
 fn benchmark_allocator(allocator: &dyn GlobalAlloc, name: &str, csvs: &mut Csvs) {
@@ -211,13 +230,19 @@ fn benchmark_allocator(allocator: &dyn GlobalAlloc, name: &str, csvs: &mut Csvs)
         let layout = Layout::from_size_align(i * 8, 8).unwrap();
         let ptr = unsafe { allocator.alloc(layout) };
         assert!(!ptr.is_null());
-        unsafe { let _ = ptr.read_volatile(); }
-        unsafe { allocator.dealloc(ptr, layout); }
+        unsafe {
+            let _ = ptr.read_volatile();
+        }
+        unsafe {
+            allocator.dealloc(ptr, layout);
+        }
     }
 
     let bench_timer = Instant::now();
     for i in 0.. {
-        if i % 0x10000 == 0 && (Instant::now() - bench_timer).as_secs_f64() > BENCH_DURATION { break; }
+        if i % 0x10000 == 0 && (Instant::now() - bench_timer).as_secs_f64() > BENCH_DURATION {
+            break;
+        }
 
         let size = fastrand::usize(1..0x10000);
         let align = 8 << fastrand::u16(..).trailing_zeros() / 2;
@@ -233,7 +258,9 @@ fn benchmark_allocator(allocator: &dyn GlobalAlloc, name: &str, csvs: &mut Csvs)
         } else {
             for (ptr, layout) in active_allocations.drain(..) {
                 let dealloc_begin = now();
-                unsafe { allocator.dealloc(ptr, layout); }
+                unsafe {
+                    allocator.dealloc(ptr, layout);
+                }
                 let dealloc_ticks = now().wrapping_sub(dealloc_begin);
                 dealloc_ticks_vec.push(dealloc_ticks);
             }
@@ -265,14 +292,16 @@ fn benchmark_allocator(allocator: &dyn GlobalAlloc, name: &str, csvs: &mut Csvs)
     let alloc_quartiles = quartiles(filtered_alloc_ticks);
     let dealloc_quartiles = quartiles(filtered_dealloc_ticks);
     let mut sum_quartiles = [0.0; 5];
-    for i in 0..sum_quartiles.len() { sum_quartiles[i] = alloc_quartiles[i] + dealloc_quartiles[i] }
+    for i in 0..sum_quartiles.len() {
+        sum_quartiles[i] = alloc_quartiles[i] + dealloc_quartiles[i]
+    }
 
-    let data_to_string = |data: &[f64]|
-        String::from_iter(data.into_iter().map(|x| x.to_string()).intersperse(",".to_owned()));
+    let data_to_string = |data: &[f64]| {
+        String::from_iter(data.into_iter().map(|x| x.to_string()).intersperse(",".to_owned()))
+    };
 
     use std::io::Write;
     writeln!(csvs.sum_file, "{name},{}", data_to_string(&sum_quartiles[..])).unwrap();
-
 }
 
 fn filter_sorted_outliers(samples: &[f64]) -> &[f64] {
@@ -298,5 +327,5 @@ fn filter_sorted_outliers(samples: &[f64]) -> &[f64] {
 
 fn quartiles(data: &[f64]) -> [f64; 5] {
     let len = data.len();
-    [data[0], data[len/4], data[len/2], data[3*len/4], data[len-1]]
+    [data[0], data[len / 4], data[len / 2], data[3 * len / 4], data[len - 1]]
 }

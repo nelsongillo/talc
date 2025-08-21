@@ -7,7 +7,7 @@ use talc::*;
 // `cargo miri run -p stable_examples --example std_global_allocator`
 
 // Notes:
-// 
+//
 // ## Using `spin::Mutex<()>`
 // The `spin` crate provides a simple mutex we can use on most platforms.
 // We'll use it for the sake of example.
@@ -26,9 +26,9 @@ use talc::*;
 static mut ARENA: [u8; 10000] = [0; 10000];
 
 #[global_allocator]
-static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> = Talc::new(unsafe {
-    ClaimOnOom::new(Span::from_array(addr_of!(ARENA) as *mut [u8; 10000]))
-}).lock();
+static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
+    Talc::new(unsafe { ClaimOnOom::new(Span::from_array(addr_of!(ARENA) as *mut [u8; 10000])) })
+        .lock();
 
 fn main() {
     let mut vec = Vec::with_capacity(100);

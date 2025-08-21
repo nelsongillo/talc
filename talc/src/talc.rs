@@ -4,10 +4,10 @@ mod tag;
 #[cfg(feature = "counters")]
 pub mod counters;
 
-use crate::{ptr_utils::*, OomHandler, Span};
+use crate::{OomHandler, Span, ptr_utils::*};
 use core::{
     alloc::Layout,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
 };
 use llist::LlistNode;
 use tag::Tag;
@@ -672,6 +672,48 @@ impl<O: OomHandler> Talc<O> {
         }
     }
 
+    /// Initialize a new instance with a shared heap. The passed `Span` must point to the first
+    /// claimed heap by the other allocator.
+    pub unsafe fn new_with_shared_heap(oom_handler: O, shared_memory: Span) -> Result<Self, ()> {
+        let mut this = Self {
+            oom_handler,
+            availability_low: 0,
+            availability_high: 0,
+            bins: null_mut(),
+
+            #[cfg(feature = "counters")]
+            counters: counters::Counters::new(),
+        };
+
+        let aligned_heap = shared_memory.word_align_inward();
+
+        // if this fails, there's no space to work with
+        if let Some((base, acme)) = aligned_heap.get_base_acme() {
+            // align the metadata pointer against the base of the heap
+            let metadata_ptr = base.add(TAG_SIZE);
+            // set the bins
+            this.bins = metadata_ptr.cast::<Bin>();
+            this.pseudo_register_gap(metadata_ptr, acme);
+            this.scan_for_errors();
+        }
+
+        Ok(this)
+    }
+
+    #[inline]
+    unsafe fn pseudo_register_gap(&mut self, base: *mut u8, acme: *mut u8) {
+        debug_assert!(is_chunk_size(base, acme));
+
+        let size = acme as usize - base as usize;
+        let bin = bin_of_size(size);
+
+        let bin_ptr = self.get_bin_ptr(bin);
+
+        if (*bin_ptr).is_some() {
+            self.set_avails(bin);
+        }
+    }
+
     /// Returns the minimum [`Span`] containing this heap's allocated memory.
     /// # Safety
     /// `heap` must be the return value of a heap manipulation function.
@@ -1178,6 +1220,60 @@ mod tests {
 
         unsafe {
             drop(Box::from_raw(big_heap));
+        }
+    }
+
+    #[test]
+    fn shared_heap_test() {
+        const ARENA_SIZE: usize = 10000000;
+
+        let arena = Box::leak(vec![0u8; ARENA_SIZE].into_boxed_slice()) as *mut [_];
+
+        let mut one = Talc::new(crate::ErrOnOom);
+        let span = unsafe { arena.as_mut().unwrap().into() };
+
+        unsafe { one.claim(span).unwrap() };
+
+        let mut two = unsafe { Talc::new_with_shared_heap(crate::ErrOnOom, span).unwrap() };
+
+        let layout = Layout::from_size_align(1243, 8).unwrap();
+
+        let a = unsafe { one.malloc(layout) };
+        assert!(a.is_ok());
+        unsafe {
+            a.unwrap().as_ptr().write_bytes(255, layout.size());
+        }
+
+        let mut x = vec![NonNull::dangling(); 100];
+
+        for _ in 0..1 {
+            for i in 0..100 {
+                let allocation = unsafe { one.malloc(layout) };
+                assert!(allocation.is_ok());
+                unsafe {
+                    allocation.unwrap().as_ptr().write_bytes(0xab, layout.size());
+                }
+                x[i] = allocation.unwrap();
+            }
+
+            for i in 0..50 {
+                unsafe {
+                    one.free(x[i], layout);
+                }
+            }
+            for i in (50..100).rev() {
+                unsafe {
+                    one.free(x[i], layout);
+                }
+            }
+        }
+
+        unsafe {
+            two.free(a.unwrap(), layout);
+        }
+
+        unsafe {
+            drop(Box::from_raw(arena));
         }
     }
 }

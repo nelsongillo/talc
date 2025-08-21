@@ -293,7 +293,7 @@ impl Span {
 
     /// Returns the [`Span`]s of `self` below and above the `exclude` span, respectively.
     /// Alternatively worded, the set difference `self`\\`exclude`.
-    /// 
+    ///
     /// If `exclude` is empty, `self` and an empty `Span` are returned.
     #[inline]
     pub fn except(self, exclude: Span) -> (Self, Self) {

@@ -7,14 +7,21 @@ extern crate alloc;
 #[cfg(not(target_family = "wasm"))]
 compile_error!("Requires targetting WASM");
 
-#[cfg(all(not(feature = "talc"), not(feature = "dlmalloc"), not(feature = "lol_alloc"), not(feature = "rlsf")))]
+#[cfg(all(
+    not(feature = "talc"),
+    not(feature = "dlmalloc"),
+    not(feature = "lol_alloc"),
+    not(feature = "rlsf")
+))]
 mod no_alloc {
     use core::alloc::{GlobalAlloc, Layout};
 
     struct NoAlloc;
     unsafe impl GlobalAlloc for NoAlloc {
-        unsafe fn alloc(&self, _: Layout) -> *mut u8 { core::ptr::null_mut() }
-        unsafe fn dealloc(&self, _: *mut u8, _: Layout) { }
+        unsafe fn alloc(&self, _: Layout) -> *mut u8 {
+            core::ptr::null_mut()
+        }
+        unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
     }
 
     #[global_allocator]
@@ -42,8 +49,8 @@ static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom>
 };
 
 #[cfg(feature = "lol_alloc")]
-#[global_allocator] 
-static LOL_ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> = 
+#[global_allocator]
+static LOL_ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> =
     unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::FreeListAllocator::new()) };
 
 #[cfg(feature = "dlmalloc")]
@@ -53,7 +60,7 @@ static DLMALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 // this is necessary, despite rust-analyzer's protests
 #[panic_handler]
 fn panic_handler(_: &core::panic::PanicInfo) -> ! {
-    loop { }
+    loop {}
 }
 
 #[no_mangle]

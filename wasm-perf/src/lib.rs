@@ -2,7 +2,6 @@ use std::alloc::Layout;
 
 use wasm_bindgen::prelude::*;
 
-
 #[cfg(all(feature = "talc", not(feature = "talc_arena")))]
 #[global_allocator]
 static TALCK: talc::TalckWasm = unsafe { talc::TalckWasm::new_global() };
@@ -14,16 +13,16 @@ static RLSF: rlsf::SmallGlobalTlsf = rlsf::SmallGlobalTlsf::new();
 #[cfg(feature = "talc_arena")]
 #[global_allocator]
 static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
-    static mut MEMORY: [std::mem::MaybeUninit<u8>; 32 * 1024 * 1024]
-        = [std::mem::MaybeUninit::uninit(); 32 * 1024 * 1024];
+    static mut MEMORY: [std::mem::MaybeUninit<u8>; 32 * 1024 * 1024] =
+        [std::mem::MaybeUninit::uninit(); 32 * 1024 * 1024];
     let span = talc::Span::from_const_array(unsafe { std::ptr::addr_of!(MEMORY) });
     talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
 };
 
 #[cfg(feature = "lol_alloc")]
-#[global_allocator] static ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> = 
+#[global_allocator]
+static ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> =
     unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::FreeListAllocator::new()) };
-
 
 #[wasm_bindgen]
 extern "C" {
@@ -45,7 +44,9 @@ pub fn bench() {
 
     // go!
     let start = timer.now();
-    for _ in 0..ITERATIONS { random_actions(); }
+    for _ in 0..ITERATIONS {
+        random_actions();
+    }
     let end = timer.now();
 
     // log durations
@@ -53,7 +54,7 @@ pub fn bench() {
     let average_ms = total_ms / ITERATIONS as f64;
     let apms = ACTIONS as f64 / average_ms / 1000.0;
     log(format!("  total time: {} ms", total_ms).as_str());
-    log(format!("  average time for {} actions: {} ms",  ACTIONS, average_ms).as_str());
+    log(format!("  average time for {} actions: {} ms", ACTIONS, average_ms).as_str());
     log(format!("  average actions/us: {:.1}", apms).as_str());
 }
 
@@ -100,7 +101,8 @@ fn random_actions() {
 
                             if !realloc.is_null() {
                                 *ptr = realloc;
-                                *layout = Layout::from_size_align_unchecked(new_size, layout.align());
+                                *layout =
+                                    Layout::from_size_align_unchecked(new_size, layout.align());
                                 score += 1;
                             }
                         }
@@ -112,6 +114,8 @@ fn random_actions() {
     }
 
     for (ptr, layout) in v {
-        unsafe { std::alloc::dealloc(ptr, layout); }
+        unsafe {
+            std::alloc::dealloc(ptr, layout);
+        }
     }
 }

@@ -1,11 +1,11 @@
 //! Home of Talck, a mutex-locked wrapper of Talc.
 
-use crate::{talc::Talc, OomHandler};
+use crate::{OomHandler, talc::Talc};
 
 use core::{
     alloc::{GlobalAlloc, Layout},
     cmp::Ordering,
-    ptr::{null_mut, NonNull},
+    ptr::{NonNull, null_mut},
 };
 
 #[cfg(feature = "allocator")]
