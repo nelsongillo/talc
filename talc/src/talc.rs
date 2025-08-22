@@ -674,7 +674,7 @@ impl<O: OomHandler> Talc<O> {
 
     /// Initialize a new instance with a shared heap. The passed `Span` must point to the first
     /// claimed heap by the other allocator.
-    pub unsafe fn new_with_shared_heap(oom_handler: O, shared_memory: Span) -> Result<Self, ()> {
+    pub unsafe fn new_with_shared_heap(oom_handler: O, shared_memory: Span) -> Result<(Self, Span), ()> {
         let mut this = Self {
             oom_handler,
             availability_low: 0,
@@ -697,7 +697,7 @@ impl<O: OomHandler> Talc<O> {
             this.scan_for_errors();
         }
 
-        Ok(this)
+        Ok((this, aligned_heap))
     }
 
     #[inline]
@@ -1234,7 +1234,7 @@ mod tests {
 
         unsafe { one.claim(span).unwrap() };
 
-        let mut two = unsafe { Talc::new_with_shared_heap(crate::ErrOnOom, span).unwrap() };
+        let (mut two, _) = unsafe { Talc::new_with_shared_heap(crate::ErrOnOom, span).unwrap() };
 
         let layout = Layout::from_size_align(1243, 8).unwrap();
 
