@@ -1,16 +1,17 @@
 //! Home of Talck, a mutex-locked wrapper of Talc.
 
-use crate::{OomHandler, talc::Talc};
+use crate::{talc::Talc, OomHandler, Span};
 
 use core::{
     alloc::{GlobalAlloc, Layout},
     cmp::Ordering,
-    ptr::{NonNull, null_mut},
+    ptr::{null_mut, NonNull},
 };
 
 #[cfg(feature = "allocator")]
 use core::alloc::{AllocError, Allocator};
 
+use crate::talc::MIN_HEAP_SIZE;
 #[cfg(all(feature = "allocator-api2", not(feature = "allocator")))]
 use allocator_api2::alloc::{AllocError, Allocator};
 
@@ -35,6 +36,58 @@ pub struct Talck<R: lock_api::RawMutex, O: OomHandler> {
 }
 
 impl<R: lock_api::RawMutex, O: OomHandler> Talck<R, O> {
+    /// Try initializing the Talck struct inside the heap to facilitate sharing between processes.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the newly created allocator and the resulting [`Span`], which is the actual
+    /// heap extent, which may be slightly smaller than requested. Use this to resize the heap.
+    /// Only the memory at higher addresses is free to use.
+    pub unsafe fn new_in_place<'a>(o: O, heap: Span) -> Result<(&'a mut Self, Span), ()> {
+        if heap.size() < MIN_HEAP_SIZE + size_of::<Self>() {
+            return Err(());
+        }
+
+        // init Talck at the beginning of the heap
+        let (base, acme) = heap.get_base_acme().unwrap();
+        let ptr = base as *mut Self;
+        ptr.write(Self::new(Talc::new(o)));
+
+        // adjust span to not include Talck
+        let base = unsafe { ptr.add(1) } as *mut u8;
+        let span = Span::new(base, acme);
+
+        // claim the rest of the heap
+        let this = &mut *ptr;
+        let inner = this.mutex.data_ptr();
+        let claim = (&mut *inner).claim(span)?;
+
+        Ok((this, claim))
+    }
+
+
+    /// Get the allocator instance which sits at the beginning of the [`Span`].
+    ///
+    /// # Safety
+    /// * Span must be valid to read
+    /// * Span must be properly aligned and fit at least the size of the allocator.
+    /// * Span must point to a properly initialized instance at the base address.
+    pub unsafe fn get_from<'a>(heap: Span) -> Result<(&'a mut Self, Span), ()> {
+        if heap.size() < MIN_HEAP_SIZE + size_of::<Self>() {
+            return Err(());
+        }
+
+        // get Talck at the beginning of the heap
+        let (base, acme) = heap.get_base_acme().unwrap();
+        let ptr = base as *mut Self;
+
+        // adjust span to not include Talck
+        let base = unsafe { ptr.add(1) } as *mut u8;
+        let span = Span::new(base, acme);
+
+        Ok((&mut *ptr, span.word_align_inward()))
+    }
+
     /// Create a new `Talck`.
     pub const fn new(talc: Talc<O>) -> Self {
         Self { mutex: lock_api::Mutex::new(talc) }
@@ -244,6 +297,68 @@ impl<O: OomHandler> Talc<O> {
     /// ```
     pub const fn lock<R: lock_api::RawMutex>(self) -> Talck<R, O> {
         Talck::new(self)
+    }
+}
+#[cfg(test)]
+mod test {
+    use crate::Talck;
+    use core::alloc::{GlobalAlloc, Layout};
+    use spin;
+
+    #[test]
+    fn shared_heap_test() {
+        const ARENA_SIZE: usize = 10000000;
+
+        let arena = Box::leak(vec![0u8; ARENA_SIZE].into_boxed_slice()) as *mut [_];
+
+        let span = unsafe { arena.as_mut().unwrap().into() };
+
+        let (one, claimed_a) = unsafe {
+            Talck::<spin::Mutex<()>, crate::ErrOnOom>::new_in_place(crate::ErrOnOom, span)
+        }
+        .unwrap();
+        let (two, claimed_b) =
+            unsafe { Talck::<spin::Mutex<()>, crate::ErrOnOom>::get_from(span) }.unwrap();
+
+        assert_eq!(claimed_a, claimed_b);
+
+        let layout = Layout::from_size_align(1243, 8).unwrap();
+
+        let a = unsafe { one.alloc(layout) };
+        unsafe {
+            a.write_bytes(255, layout.size());
+        }
+
+        let mut x = vec![core::ptr::null_mut(); 100];
+
+        for _ in 0..1 {
+            for i in 0..100 {
+                let allocation = unsafe { one.alloc(layout) };
+                unsafe {
+                    allocation.write_bytes(0xab, layout.size());
+                }
+                x[i] = allocation;
+            }
+
+            for i in 0..50 {
+                unsafe {
+                    one.dealloc(x[i], layout);
+                }
+            }
+            for i in (50..100).rev() {
+                unsafe {
+                    two.dealloc(x[i], layout);
+                }
+            }
+        }
+
+        unsafe {
+            two.dealloc(a, layout);
+        }
+
+        unsafe {
+            drop(Box::from_raw(arena));
+        }
     }
 }
 
